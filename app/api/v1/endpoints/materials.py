@@ -26,18 +26,17 @@ async def upload_material(file: UploadFile = File(...), user=Depends(get_current
         raise HTTPException(status_code=413, detail="The uploaded file is too large")
 
     content_hash = hashlib.sha256(content).hexdigest()
-    existing = find_material(str(user.id), content_hash)
-    if existing:
-        return {
-            "id": existing["id"],
-            "filename": existing["filename"],
-            "page_count": existing["page_count"],
-            "reused": True,
-        }
-
     try:
         sections = extract_document(content, extension)
         chunks = chunk_sections(sections)
+        existing = find_material(str(user.id), content_hash)
+        if existing:
+            return {
+                "id": existing["id"],
+                "filename": existing["filename"],
+                "page_count": existing["page_count"],
+                "reused": True,
+            }
         material_id = str(uuid4())
         index_chunks(str(user.id), material_id, chunks)
         material = create_material(

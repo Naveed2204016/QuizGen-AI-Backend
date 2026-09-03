@@ -58,6 +58,9 @@ def submit_attempt(attempt_id: str, payload: SubmitAttemptRequest, user=Depends(
     too_late = now > expires_at + timedelta(seconds=15)
     submitted = {} if too_late else {item.question_id: item.answer for item in payload.answers}
     questions = attempt["exams"]["questions"]
+    valid_question_ids = {question["id"] for question in questions}
+    if any(question_id not in valid_question_ids for question_id in submitted):
+        raise HTTPException(status_code=400, detail="Submission contains an invalid question ID")
     results = evaluate_answers(questions, submitted)
     awarded = sum(item["awarded_marks"] for item in results)
     maximum = sum(item["max_marks"] for item in results) or 1

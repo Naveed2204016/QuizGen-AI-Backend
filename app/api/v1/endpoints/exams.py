@@ -19,7 +19,9 @@ def generate_exam(payload: GenerateExamRequest, user=Depends(get_current_user)):
     material = get_material(user_id, payload.material_id)
     if not material:
         raise HTTPException(status_code=404, detail="Material not found")
-    context = retrieve_generation_context(user_id, payload.material_id)
+    total_questions = payload.mcq_count + payload.short_count
+    context_limit = min(36, max(18, total_questions * 2))
+    context = retrieve_generation_context(user_id, payload.material_id, limit=context_limit)
     previous = previous_question_texts(user_id, payload.material_id)
     questions = generate_questions(context, payload.mcq_count, payload.short_count, previous)
     exam = create_exam(

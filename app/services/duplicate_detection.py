@@ -8,6 +8,8 @@ def normalize_question(text: str) -> str:
 
 
 def filter_duplicates(candidates: list[dict], previous: list[str], needed: int) -> list[dict]:
+    if needed <= 0:
+        return []
     accepted: list[dict] = []
     comparison_texts = [text for text in previous if text]
     comparison_vectors = embed_texts(comparison_texts) if comparison_texts else []

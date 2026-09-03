@@ -18,6 +18,19 @@ def _clean(text: str) -> str:
     return re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", text)).strip()
 
 
+def _has_meaningful_text(text: str) -> bool:
+    """Reject scanner watermarks and similarly content-free extracted pages."""
+    without_scanner_labels = re.sub(
+        r"(?im)^\s*(?:scanned\s+by\s+camscanner|camscanner)\s*$", "", text
+    ).strip()
+    words = re.findall(r"[A-Za-z]{2,}", without_scanner_labels)
+    return (
+        len(without_scanner_labels) >= 20
+        and len(words) >= 5
+        and len(set(map(str.lower, words))) >= 4
+    )
+
+
 def extract_document(content: bytes, extension: str) -> list[DocumentSection]:
     if extension == ".pdf":
         reader = PdfReader(io.BytesIO(content))
@@ -40,7 +53,9 @@ def extract_document(content: bytes, extension: str) -> list[DocumentSection]:
     else:
         raise ValueError("Only PDF and PPTX files are supported")
 
-    useful = [section for section in sections if len(section.text) >= 20]
+    useful = [section for section in sections if _has_meaningful_text(section.text)]
     if not useful:
-        raise ValueError("No readable text was found. Scanned/image-only files require OCR.")
+        raise ValueError(
+            "No readable study text was found. This appears to be a scanned/image-only file and requires OCR."
+        )
     return useful

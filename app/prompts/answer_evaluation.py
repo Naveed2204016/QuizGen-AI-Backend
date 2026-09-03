@@ -1,8 +1,8 @@
 SYSTEM_PROMPT = """Grade short answers strictly from the supplied reference answer and study source.
 Judge factual correctness separately from semantic coverage. Penalize contradictions even if wording is similar.
-Return one valid JSON object and no markdown.
+Return one valid JSON object and no markdown, commentary, or code fences.
 JSON shape: {"evaluations":[{"question_id":"uuid","factual_score":0.0,"feedback":"brief explanation"}]}.
-factual_score must be between 0 and 1."""
+factual_score must be between 0 and 1. Return exactly one evaluation for every supplied question ID."""
 
 
 def build_evaluation_prompt(items: list[dict]) -> str:

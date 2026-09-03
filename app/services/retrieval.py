@@ -37,23 +37,30 @@ def index_chunks(user_id: str, material_id: str, chunks: list[dict]) -> None:
 
 
 def retrieve_generation_context(user_id: str, material_id: str, limit: int = 18) -> list[dict]:
+    if limit <= 0:
+        return []
     client = get_qdrant_client()
     settings = get_settings()
-    queries = [
-        "important definitions, core concepts, conclusions and comparisons",
-        "important formulas, equations, calculations, worked examples and problem solving",
-        "key facts, processes, causes, effects and applications",
-    ]
-    selected: dict[str, dict] = {}
-    for query in queries:
-        response = client.query_points(
-            collection_name=settings.qdrant_collection,
-            query=embed_texts([query])[0],
-            query_filter=_filter(user_id, material_id),
-            limit=max(6, limit // len(queries)),
-            with_payload=True,
-        )
-        for point in response.points:
-            payload = dict(point.payload or {})
-            selected[str(point.id)] = payload
-    return sorted(selected.values(), key=lambda item: (item.get("section_number", 0), item.get("part", 0)))[:limit]
+    points, _ = client.scroll(
+        collection_name=settings.qdrant_collection,
+        scroll_filter=_filter(user_id, material_id),
+        limit=10_000,
+        with_payload=True,
+        with_vectors=False,
+    )
+    chunks = sorted(
+        (dict(point.payload or {}) for point in points),
+        key=lambda item: (item.get("section_number", 0), item.get("part", 0)),
+    )
+    if len(chunks) <= limit:
+        return chunks
+    if limit == 1:
+        return [chunks[len(chunks) // 2]]
+
+    # Generation needs broad document coverage, not the chunks most similar to
+    # a few generic queries. Sample uniformly from beginning through end.
+    indices = {
+        round(index * (len(chunks) - 1) / (limit - 1))
+        for index in range(limit)
+    }
+    return [chunks[index] for index in sorted(indices)]
