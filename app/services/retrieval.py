@@ -25,6 +25,14 @@ def index_chunks(user_id: str, material_id: str, chunks: list[dict]) -> None:
             collection_name=settings.qdrant_collection,
             vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE),
         )
+    else:
+        # Re-uploading a material refreshes its local index without accumulating
+        # duplicate chunks. This also repairs an index deleted between API runs.
+        client.delete(
+            collection_name=settings.qdrant_collection,
+            points_selector=_filter(user_id, material_id),
+            wait=True,
+        )
     points = [
         PointStruct(
             id=str(uuid4()),

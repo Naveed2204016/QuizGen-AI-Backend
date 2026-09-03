@@ -31,6 +31,10 @@ async def upload_material(file: UploadFile = File(...), user=Depends(get_current
         chunks = chunk_sections(sections)
         existing = find_material(str(user.id), content_hash)
         if existing:
+            # The Supabase material can outlive the machine-local Qdrant index.
+            # Rebuild its chunks on upload so the returned material ID always
+            # has generation context available locally.
+            index_chunks(str(user.id), existing["id"], chunks)
             return {
                 "id": existing["id"],
                 "filename": existing["filename"],

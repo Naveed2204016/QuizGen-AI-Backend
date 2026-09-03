@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     max_upload_mb: int = 20
     max_questions: int = 50
+    ocr_enabled: bool = True
+    ocr_language: str = "eng"
+    ocr_dpi: int = 300
+    tesseract_cmd: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

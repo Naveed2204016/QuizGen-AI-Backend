@@ -29,7 +29,22 @@ and Groq-based grounded question generation and short-answer evaluation.
 
 ## Notes
 
-- Only text-based PDF and PPTX are supported. Image-only/scanned documents need OCR.
+- Text-based PDF and PPTX files are supported. Scanned PDF pages use local
+  Tesseract OCR when `OCR_ENABLED=true`.
 - Text-form equations are preserved when the document extractor can read them.
 - The first material upload downloads the configured FastEmbed model and may be slower.
 - Qdrant data is stored locally in `data/qdrant` and is ignored by Git.
+
+## Scanned PDF OCR
+
+Install Tesseract OCR on the API machine, then configure `.env`:
+
+```env
+OCR_ENABLED=true
+OCR_LANGUAGE=eng
+OCR_DPI=300
+TESSERACT_CMD=C:/Program Files/Tesseract-OCR/tesseract.exe
+```
+
+OCR runs only for PDF pages without enough embedded text. For Bangla and English,
+install both Tesseract language data files and use `OCR_LANGUAGE=eng+ben`.

@@ -2,8 +2,12 @@ import io
 import re
 from dataclasses import dataclass
 
-from pypdf import PdfReader
+import pymupdf
+import pytesseract
 from pptx import Presentation
+from pypdf import PdfReader
+
+from app.core.config import get_settings
 
 
 @dataclass
@@ -23,7 +27,8 @@ def _has_meaningful_text(text: str) -> bool:
     without_scanner_labels = re.sub(
         r"(?im)^\s*(?:scanned\s+by\s+camscanner|camscanner)\s*$", "", text
     ).strip()
-    words = re.findall(r"[A-Za-z]{2,}", without_scanner_labels)
+    # Count letters from any Unicode script so Bangla and other languages are valid.
+    words = re.findall(r"[^\W\d_]{2,}", without_scanner_labels, flags=re.UNICODE)
     return (
         len(without_scanner_labels) >= 20
         and len(words) >= 5
@@ -31,13 +36,56 @@ def _has_meaningful_text(text: str) -> bool:
     )
 
 
+def _ocr_pdf_page(document: pymupdf.Document, page_index: int) -> str:
+    """Render one PDF page and extract its text with local Tesseract OCR."""
+    settings = get_settings()
+    if settings.tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
+
+    page = document.load_page(page_index)
+    pixmap = page.get_pixmap(
+        dpi=settings.ocr_dpi,
+        colorspace=pymupdf.csRGB,
+        alpha=False,
+    )
+    image = pixmap.pil_image()
+    try:
+        return _clean(pytesseract.image_to_string(image, lang=settings.ocr_language))
+    finally:
+        image.close()
+
+
+def _extract_pdf(content: bytes) -> list[DocumentSection]:
+    reader = PdfReader(io.BytesIO(content))
+    sections = [
+        DocumentSection(index, f"Page {index}", _clean(page.extract_text() or ""))
+        for index, page in enumerate(reader.pages, 1)
+    ]
+
+    settings = get_settings()
+    unreadable_indexes = [
+        index for index, section in enumerate(sections) if not _has_meaningful_text(section.text)
+    ]
+    if not settings.ocr_enabled or not unreadable_indexes:
+        return sections
+
+    try:
+        with pymupdf.open(stream=content, filetype="pdf") as document:
+            for page_index in unreadable_indexes:
+                sections[page_index].text = _ocr_pdf_page(document, page_index)
+    except pytesseract.TesseractNotFoundError as exc:
+        raise ValueError(
+            "This PDF needs OCR, but Tesseract is not installed or configured."
+        ) from exc
+    except pytesseract.TesseractError as exc:
+        raise ValueError(f"OCR failed: {exc}") from exc
+
+    return sections
+
+
 def extract_document(content: bytes, extension: str) -> list[DocumentSection]:
     if extension == ".pdf":
-        reader = PdfReader(io.BytesIO(content))
-        sections = [
-            DocumentSection(index, f"Page {index}", _clean(page.extract_text() or ""))
-            for index, page in enumerate(reader.pages, 1)
-        ]
+        sections = _extract_pdf(content)
     elif extension == ".pptx":
         presentation = Presentation(io.BytesIO(content))
         sections = []
@@ -56,6 +104,6 @@ def extract_document(content: bytes, extension: str) -> list[DocumentSection]:
     useful = [section for section in sections if _has_meaningful_text(section.text)]
     if not useful:
         raise ValueError(
-            "No readable study text was found. This appears to be a scanned/image-only file and requires OCR."
+            "No readable study text was found, even after OCR. Try a clearer scan or check the OCR language."
         )
     return useful
