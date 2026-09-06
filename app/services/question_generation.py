@@ -5,10 +5,9 @@ import re
 from uuid import uuid4
 
 from fastapi import HTTPException
-from groq import APIError, BadRequestError
+from google.genai.errors import APIError
 
-from app.clients.groq import get_groq_client
-from app.core.config import get_settings
+from app.clients.gemini import generate_json
 from app.prompts.question_generation import SYSTEM_PROMPT, build_generation_prompt
 from app.services.duplicate_detection import filter_duplicates
 
@@ -33,22 +32,18 @@ def _parse_json_object(content: str) -> dict:
 
 
 def _request_candidates(messages: list[dict]) -> list:
-    request = {
-        "model": get_settings().groq_model,
-        "messages": messages,
-        "response_format": {"type": "json_object"},
-        "reasoning_effort": "none",
-        "temperature": 0.45,
-        "max_completion_tokens": 5000,
-    }
-    try:
-        response = get_groq_client().chat.completions.create(**request)
-    except BadRequestError:
-        # Some Groq models intermittently reject otherwise valid generations in
-        # JSON Object Mode. The prompt still requires JSON, and we validate it.
-        request.pop("response_format")
-        response = get_groq_client().chat.completions.create(**request)
-    parsed = _parse_json_object(response.choices[0].message.content or "{}")
+    system_instruction = "\n\n".join(
+        str(message["content"]) for message in messages if message["role"] == "system"
+    )
+    prompt = "\n\n".join(
+        str(message["content"]) for message in messages if message["role"] != "system"
+    )
+    content = generate_json(
+        system_instruction=system_instruction,
+        prompt=prompt,
+        max_output_tokens=5000,
+    )
+    parsed = _parse_json_object(content)
     candidates = parsed.get("questions", [])
     if not isinstance(candidates, list):
         raise ValueError("questions must be a list")

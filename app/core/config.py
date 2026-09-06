@@ -12,9 +12,9 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_publishable_key: str
     supabase_secret_key: str | None = None
-    groq_api_key: str
-    groq_model: str = "qwen/qwen3.6-27b"
-    groq_timeout_seconds: float = 60
+    gemini_api_key: str
+    gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_timeout_seconds: float = 90
     qdrant_path: str = "./data/qdrant"
     qdrant_collection: str = "quizgen_chunks"
     embedding_model: str = "BAAI/bge-small-en-v1.5"

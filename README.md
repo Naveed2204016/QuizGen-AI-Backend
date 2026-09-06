@@ -1,7 +1,7 @@
 # QuizGen AI Backend
 
 FastAPI backend for Supabase authentication/history, local Qdrant + FastEmbed retrieval,
-and Groq-based grounded question generation and short-answer evaluation.
+and Gemini-based grounded question generation and short-answer evaluation.
 
 ## One-time setup
 
@@ -15,8 +15,8 @@ and Groq-based grounded question generation and short-answer evaluation.
 2. In Supabase, open **SQL Editor**, paste the contents of
    `supabase/migrations/001_quizgen_schema.sql`, and click **Run**.
 
-3. Confirm `.env` contains valid Supabase publishable/secret keys and a Groq key.
-   Never expose the Supabase secret key or Groq key in frontend code.
+3. Confirm `.env` contains valid Supabase publishable/secret keys and a Gemini key.
+   Never expose the Supabase secret key or Gemini key in frontend code.
 
 4. Start the API:
 

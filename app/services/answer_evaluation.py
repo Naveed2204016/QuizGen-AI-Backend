@@ -2,10 +2,9 @@ import json
 import logging
 import re
 
-from groq import APIError
+from google.genai.errors import APIError
 
-from app.clients.groq import get_groq_client
-from app.core.config import get_settings
+from app.clients.gemini import generate_json
 from app.prompts.answer_evaluation import SYSTEM_PROMPT, build_evaluation_prompt
 from app.services.embeddings import cosine_similarity, embed_texts
 
@@ -31,23 +30,12 @@ def _parse_evaluations(content: str) -> list[dict]:
 
 
 def _evaluate_short_batch(items: list[dict]) -> list[dict]:
-    request = {
-        "model": get_settings().groq_model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": build_evaluation_prompt(items)},
-        ],
-        "response_format": {"type": "json_object"},
-        "reasoning_effort": "none",
-        "temperature": 0,
-        "max_completion_tokens": 2400,
-    }
-    try:
-        response = get_groq_client().chat.completions.create(**request)
-    except APIError:
-        request.pop("response_format")
-        response = get_groq_client().chat.completions.create(**request)
-    return _parse_evaluations(response.choices[0].message.content or "{}")
+    content = generate_json(
+        system_instruction=SYSTEM_PROMPT,
+        prompt=build_evaluation_prompt(items),
+        max_output_tokens=2400,
+    )
+    return _parse_evaluations(content)
 
 
 def _semantic_score(answer: str, reference: str) -> float:
