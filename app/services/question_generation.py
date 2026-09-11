@@ -3,6 +3,8 @@ import logging
 import math
 import re
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
+from time import perf_counter
 
 from fastapi import HTTPException
 from google.genai.errors import APIError
@@ -64,14 +66,41 @@ def generate_questions(
 ) -> list[dict]:
     if not context:
         raise HTTPException(status_code=422, detail="No material context is available")
+    started = perf_counter()
     labeled = [{**item, "source_id": f"S{index}"} for index, item in enumerate(context, 1)]
-    source_map = {item["source_id"]: item for item in labeled}
     accepted: list[dict] = []
     last_error: Exception | None = None
 
     total_requested = mcq_count + short_count
     planned_batches = max(1, math.ceil(total_requested / GENERATION_BATCH_SIZE))
     max_attempts = planned_batches + 3
+
+    # Independent initial batches overlap provider latency. Merge and deduplicate
+    # in order, then request only deficits using all accepted questions.
+    def request(batch_context, mcqs, shorts, exclusions):
+        return _request_candidates([
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": build_generation_prompt(batch_context, mcqs, shorts, exclusions)},
+        ])
+
+    plans = []
+    remaining_mcqs, remaining_shorts = mcq_count, short_count
+    for index in range(planned_batches):
+        total = min(GENERATION_BATCH_SIZE, remaining_mcqs + remaining_shorts)
+        mcqs = min(remaining_mcqs, round(total * remaining_mcqs / (remaining_mcqs + remaining_shorts)))
+        shorts = min(remaining_shorts, total - mcqs)
+        mcqs = min(remaining_mcqs, total - shorts)
+        plans.append((_context_window(labeled, index, planned_batches), mcqs, shorts))
+        remaining_mcqs -= mcqs
+        remaining_shorts -= shorts
+    initial = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(request, ctx, m, s, previous) for ctx, m, s in plans]
+        for future in futures:
+            try:
+                initial.append(future.result())
+            except (APIError, json.JSONDecodeError, AttributeError, TypeError, ValueError) as exc:
+                initial.append(exc)
 
     # Small batches avoid truncated JSON for larger exams. Each batch receives a
     # different section of the document so questions cover beginning through end.
@@ -81,6 +110,7 @@ def generate_questions(
         missing_mcqs = mcq_count - len(mcqs)
         missing_shorts = short_count - len(shorts)
         if missing_mcqs <= 0 and missing_shorts <= 0:
+            logger.info("Generation completed in %.2fs", perf_counter() - started)
             return mcqs[:mcq_count] + shorts[:short_count]
 
         remaining = missing_mcqs + missing_shorts
@@ -94,17 +124,13 @@ def generate_questions(
         batch_context = _context_window(labeled, attempt - 1, planned_batches)
         exclusions = previous + [q["question"] for q in accepted]
         try:
-            candidates = _request_candidates(
-                [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": build_generation_prompt(
-                            batch_context, batch_mcqs, batch_shorts, exclusions
-                        ),
-                    },
-                ]
-            )
+            if attempt <= planned_batches:
+                batch_context, batch_mcqs, batch_shorts = plans[attempt - 1]
+                candidates = initial[attempt - 1]
+                if isinstance(candidates, Exception):
+                    raise candidates
+            else:
+                candidates = request(batch_context, batch_mcqs, batch_shorts, exclusions)
         except (APIError, json.JSONDecodeError, AttributeError, TypeError, ValueError) as exc:
             last_error = exc
             logger.warning("Question generation attempt %s failed: %s", attempt, exc)
@@ -114,7 +140,7 @@ def generate_questions(
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
-            prepared = _prepare_candidate(candidate, source_map, labeled[0])
+            prepared = _prepare_candidate(candidate, {item["source_id"]: item for item in batch_context}, labeled[0])
             if prepared:
                 valid_candidates.append(prepared)
 
@@ -141,6 +167,11 @@ def generate_questions(
             short_count,
         )
 
+    mcqs = [q for q in accepted if q["type"] == "mcq"]
+    shorts = [q for q in accepted if q["type"] == "short"]
+    if len(mcqs) == mcq_count and len(shorts) == short_count:
+        logger.info("Generation completed in %.2fs", perf_counter() - started)
+        return mcqs + shorts
     detail = (
         f"AI generated {len([q for q in accepted if q['type'] == 'mcq'])}/{mcq_count} MCQs "
         f"and {len([q for q in accepted if q['type'] == 'short'])}/{short_count} short questions"
@@ -179,12 +210,16 @@ def _prepare_candidate(candidate: dict, source_map: dict, fallback_source: dict)
     if question_type == "mcq" and (
         not isinstance(options, list)
         or len(options) != 4
+        or not all(isinstance(option, str) and option.strip() for option in options)
+        or len({option.strip().casefold() for option in options}) != 4
         or candidate.get("correct_answer") not in options
     ):
         return None
-    if not all(candidate.get(key) for key in ("question", "correct_answer", "explanation")):
+    if not all(isinstance(candidate.get(key), str) and candidate[key].strip() for key in ("question", "correct_answer", "explanation")):
         return None
-    source = source_map.get(candidate.get("source_id"), fallback_source)
+    source = source_map.get(candidate.get("source_id"))
+    if source is None:
+        return None
     return {
         **candidate,
         "type": question_type,

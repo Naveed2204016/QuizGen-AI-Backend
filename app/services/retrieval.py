@@ -44,6 +44,14 @@ def index_chunks(user_id: str, material_id: str, chunks: list[dict]) -> None:
     client.upsert(collection_name=settings.qdrant_collection, points=points, wait=True)
 
 
+def has_material_index(user_id: str, material_id: str, expected_count: int) -> bool:
+    client = get_qdrant_client()
+    collection = get_settings().qdrant_collection
+    return expected_count > 0 and client.collection_exists(collection) and client.count(
+        collection_name=collection, count_filter=_filter(user_id, material_id), exact=True
+    ).count == expected_count
+
+
 def retrieve_generation_context(user_id: str, material_id: str, limit: int = 18) -> list[dict]:
     if limit <= 0:
         return []

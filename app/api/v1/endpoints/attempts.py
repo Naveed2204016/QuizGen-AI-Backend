@@ -56,11 +56,15 @@ def submit_attempt(attempt_id: str, payload: SubmitAttemptRequest, user=Depends(
     now = datetime.now(timezone.utc)
     expires_at = datetime.fromisoformat(attempt["expires_at"].replace("Z", "+00:00"))
     too_late = now > expires_at + timedelta(seconds=15)
-    submitted = {} if too_late else {item.question_id: item.answer for item in payload.answers}
+    submitted = (attempt.get("answers") or {}) if too_late else {item.question_id: item.answer for item in payload.answers}
     questions = attempt["exams"]["questions"]
     valid_question_ids = {question["id"] for question in questions}
     if any(question_id not in valid_question_ids for question_id in submitted):
         raise HTTPException(status_code=400, detail="Submission contains an invalid question ID")
+    # Preserve an on-time submission if the grader is unavailable, so a retry
+    # after expiry grades the saved answers instead of replacing them with blanks.
+    if not too_late:
+        update_attempt(attempt_id, user_id, {"answers": submitted})
     results = evaluate_answers(questions, submitted)
     awarded = sum(item["awarded_marks"] for item in results)
     maximum = sum(item["max_marks"] for item in results) or 1
@@ -90,6 +94,21 @@ def submit_attempt(attempt_id: str, payload: SubmitAttemptRequest, user=Depends(
         },
     )
     return result_payload
+
+
+@router.get("/attempts/{attempt_id}")
+def active_attempt(attempt_id: str, user=Depends(get_current_user)):
+    attempt = get_attempt(str(user.id), attempt_id)
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+    if attempt["status"] != "in_progress":
+        raise HTTPException(status_code=409, detail="This attempt has already been submitted")
+    return {
+        "attempt_id": attempt["id"], "exam_id": attempt["exam_id"],
+        "material": (attempt["exams"].get("materials") or {}).get("filename", "Study material"),
+        "expires_at": attempt["expires_at"],
+        "questions": [_public_question(question) for question in attempt["exams"]["questions"]],
+    }
 
 
 @router.get("/attempts/{attempt_id}/result")

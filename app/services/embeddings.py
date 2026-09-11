@@ -12,7 +12,14 @@ def get_embedding_model() -> TextEmbedding:
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    return [vector.tolist() for vector in get_embedding_model().embed(texts)]
+    return [list(vector) for vector in _embed_batch(tuple(texts))]
+
+
+@lru_cache(maxsize=128)
+def _embed_batch(texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+    if not texts:
+        return ()
+    return tuple(tuple(vector.tolist()) for vector in get_embedding_model().embed(list(texts)))
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:

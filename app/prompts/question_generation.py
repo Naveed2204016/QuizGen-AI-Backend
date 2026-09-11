@@ -15,11 +15,10 @@ def build_generation_prompt(context: list[dict], mcq_count: int, short_count: in
     sources = "\n\n".join(
         f"[{item['source_id']}] {item['source']}\n{item['text']}" for item in context
     )
-    exclusions = "\n".join(f"- {question}" for question in previous[-40:]) or "None"
+    exclusions = "\n".join(f"- {question}" for question in previous) or "None"
     total = mcq_count + short_count
-    candidate_count = min(max(total + 4, total * 2), total + 12)
-    return f"""Create exactly {candidate_count} candidate questions so the application can remove near-duplicates.
-Include at least {mcq_count} questions whose type is exactly "mcq" and at least {short_count} whose type is exactly "short".
+    return f"""Create exactly {total} questions.
+Include exactly {mcq_count} questions whose type is exactly "mcq" and exactly {short_count} whose type is exactly "short".
 Use varied cognitive styles and prioritize broad important-topic coverage.
 
 Previously used questions to avoid:

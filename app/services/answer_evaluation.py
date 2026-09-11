@@ -1,6 +1,9 @@
 import json
 import logging
 import re
+import math
+
+from fastapi import HTTPException
 
 from google.genai.errors import APIError
 
@@ -51,16 +54,25 @@ def _semantic_score(answer: str, reference: str) -> float:
 
 def _score_value(value: object, fallback: float) -> float:
     try:
-        return max(0.0, min(1.0, float(value)))
+        number = float(value)
+        return max(0.0, min(1.0, number)) if math.isfinite(number) else fallback
     except (TypeError, ValueError):
         return fallback
+
+
+def _is_non_answer(answer: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9 ]", "", answer.casefold())
+    normalized = " ".join(normalized.split())
+    return normalized in {"", "i dont know", "dont know", "i do not know", "do not know",
+                          "idk", "no idea", "i have no idea", "not sure", "i am not sure",
+                          "skip", "n a", "na", "i dont understand", "i cannot answer"}
 
 
 def evaluate_answers(questions: list[dict], submitted: dict[str, str]) -> list[dict]:
     short_items: list[dict] = []
     for question in questions:
         answer = submitted.get(question["id"], "").strip()
-        if question["type"] == "short" and answer:
+        if question["type"] == "short" and not _is_non_answer(answer):
             short_items.append(
                 {
                     "question_id": question["id"],
@@ -111,17 +123,16 @@ def evaluate_answers(questions: list[dict], submitted: dict[str, str]) -> list[d
             factual = score
             feedback = "Correct." if score else "Review the explanation and cited source."
         else:
-            if answer:
-                semantic = _semantic_score(answer, question["correct_answer"])
+            if not _is_non_answer(answer):
                 evaluation = factual_by_id.get(question["id"], {})
-                if evaluation:
-                    factual = _score_value(evaluation.get("factual_score"), semantic)
-                    score = 0.35 * semantic + 0.65 * factual
-                    feedback = evaluation.get("feedback", "Answer evaluated against the source.")
-                else:
-                    factual = semantic
-                    score = semantic
-                    feedback = "AI grading was unavailable; semantic fallback grading was used."
+                factual = _score_value(evaluation.get("factual_score"), -1)
+                if factual < 0:
+                    raise HTTPException(status_code=503, detail="Reliable grading is temporarily unavailable. Your attempt has not been finalized; please retry submission.")
+                # Credit is based on demonstrated correct content. Similar wording
+                # is diagnostic only and must never grant marks for false answers.
+                score = factual
+                semantic = _semantic_score(answer, question["correct_answer"]) if factual > 0 else 0.0
+                feedback = evaluation.get("feedback", "Answer evaluated against the source.")
             else:
                 semantic = factual = score = 0.0
                 feedback = "Not answered."
@@ -139,7 +150,8 @@ def evaluate_answers(questions: list[dict], submitted: dict[str, str]) -> list[d
                 "factual_score": round(factual, 3),
                 "awarded_marks": round(score, 2),
                 "max_marks": 1,
-                "correct": score >= 0.7,
+                "correct": score == 1.0,
+                "grading_status": "correct" if score == 1 else "partial" if score > 0 else "incorrect",
                 "feedback": feedback,
             }
         )
